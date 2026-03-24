@@ -39,4 +39,5 @@ win.Option(app.Title("My App"), app.Size(unit.Dp(800), unit.Dp(600)))
 
 - **[GIO_GOTCHAS.md](GIO_GOTCHAS.md)**: Critical gotchas (widget persistence, theme allocation, macOS deadlocks, Tab events, scroll bounds, pointer filters, focus, clipboard) and keyboard input handling. **Read this first.**
 - **[GIO_PATTERNS.md](GIO_PATTERNS.md)**: Layout patterns (anchored header, images, right-click, context menu component).
-- **[GIO_PLATFORM.md](GIO_PLATFORM.md)**: Cross-platform CGO builds, platform stubs, daemon pattern, app icons, fonts, Material Design icons, window position persistence (macOS).
+- **[GIO_PLATFORM.md](GIO_PLATFORM.md)**: Cross-platform CGO builds, platform stubs, daemon pattern, app icons, fonts, Material Design icons.
+- **[GIO_WINDOW_POSITION.md](GIO_WINDOW_POSITION.md)**: Window position persistence on macOS (AppKitViewEvent, CGo Cocoa APIs, coordinate gotchas).
