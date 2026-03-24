@@ -266,6 +266,106 @@ case pointer.Event:
     }
 ```
 
+### Context Menu Component
+
+A reusable floating context menu with hover highlighting, click-outside dismiss, and per-item actions. Key patterns:
+
+**Structure**: Persistent struct with stable pointer tags for event routing.
+
+```go
+type ContextMenu struct {
+    visible    bool
+    showFrame  bool        // prevents dismiss on the frame Show() was called
+    pos        image.Point // raw cursor position at show time
+    items      []MenuItem
+    itemTags   []*bool     // stable pointers — use []*bool not []bool
+    bgTag      bool        // background dismiss handler
+    hoverIdx   int         // -1 = none
+    targetPID  int32       // caller-specific payload
+    targetName string
+}
+```
+
+**PassOp on the dismiss overlay (CRITICAL)**: The dismiss area covers the full window. Without `pointer.PassOp`, it is the topmost handler in the op tree and **steals all pointer events** from handlers underneath (row click handlers, buttons, etc.). This causes the "click to dismiss, next click does nothing" bug — the underlying handler never receives the event.
+
+```go
+// WRONG: bg overlay blocks all events to handlers underneath
+bgArea := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
+event.Op(gtx.Ops, &m.bgTag)
+bgArea.Pop()
+
+// CORRECT: PassOp lets events pass through to underlying handlers
+passStack := pointer.PassOp{}.Push(gtx.Ops)
+bgArea := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
+event.Op(gtx.Ops, &m.bgTag)
+bgArea.Pop()
+passStack.Pop()
+```
+
+**Stale event drain on Show()**: When `Show()` is called (e.g. by a row right-click handler), the bg overlay from the previous frame has the same right-click event queued. Without draining, `Layout()` would immediately dismiss the menu it just opened. Set a `showFrame` flag in `Show()` and drain stale events at the start of `Layout()` when the flag is set.
+
+```go
+func (m *ContextMenu) Show(pos image.Point, ...) {
+    m.visible = true
+    m.showFrame = true  // signal to drain stale events this frame
+    m.hoverIdx = -1
+    // ...
+}
+
+func (m *ContextMenu) Layout(gtx layout.Context, th *material.Theme) menuResult {
+    if !m.visible {
+        m.drainEvents(gtx)  // always drain when hidden
+        return menuResult{}
+    }
+    if m.showFrame {
+        m.showFrame = false
+        m.drainEvents(gtx)  // discard stale bg events from previous frame
+    }
+    // ... register bg overlay with PassOp, check dismiss, render items
+}
+```
+
+**Hover highlighting**: Register `pointer.Enter | pointer.Leave | pointer.Press` on each item's clip area. Track `hoverIdx` and paint a highlight background before the label.
+
+```go
+// Register events
+itemArea := clip.Rect{Max: image.Pt(itemW, itemH)}.Push(gtx.Ops)
+event.Op(gtx.Ops, tag)
+itemArea.Pop()
+
+// Process events
+for {
+    ev, ok := gtx.Event(pointer.Filter{
+        Target: tag,
+        Kinds:  pointer.Press | pointer.Enter | pointer.Leave,
+    })
+    if !ok { break }
+    if e, ok := ev.(pointer.Event); ok {
+        switch e.Kind {
+        case pointer.Enter:  m.hoverIdx = i
+        case pointer.Leave:  if m.hoverIdx == i { m.hoverIdx = -1 }
+        case pointer.Press:  // trigger action, dismiss
+        }
+    }
+}
+
+// Draw hover background before label
+if m.hoverIdx == i {
+    paint.FillShape(gtx.Ops, hoverColor, clip.Rect{Max: image.Pt(itemW, itemH)}.Op())
+}
+```
+
+**Position offset**: Native context menus appear with the first item vertically centered at the cursor, shifted slightly left. Apply an offset before clamping to window bounds:
+
+```go
+displayPos := clampPosition(
+    image.Pt(m.pos.X-8, m.pos.Y-itemH/2-padTop),
+    menuW, totalH, gtx.Constraints.Max.X, gtx.Constraints.Max.Y,
+)
+```
+
+**Execution order**: Row handlers run in `layoutTable` (before `menu.Layout`). Right-click calls `Show()` which sets `showFrame=true`. Then `menu.Layout` runs, sees `showFrame`, drains stale bg events, and renders the menu. The PassOp ensures both the bg overlay and row handlers receive future events.
+
 ---
 
 ## Fonts
@@ -364,3 +464,111 @@ cmd.Start()  // don't Wait — let it run independently
 ```go
 conn.SetDeadline(time.Now().Add(5 * time.Second))
 ```
+
+---
+
+## App Icons (Dock / Taskbar)
+
+**Always generate icons with `~/bin/generate_image`** using `--transparent` for a proper transparent background PNG. Never use placeholder icons or skip icon generation.
+
+```bash
+# Generate a 512x512 transparent dock icon
+~/bin/generate_image \
+  --prompt "description of your app icon, centered on solid dark background" \
+  --width 512 --height 512 \
+  --output src/cmd/myapp/gui/icon.png \
+  --transparent
+```
+
+Embed and set the dock icon on macOS via CGO (`NSApplication setApplicationIconImage:`). See the `icon_darwin.go` pattern with `//go:embed gui/icon.png`. Always provide a `_other.go` stub for non-darwin builds.
+
+---
+
+## Material Design Icons
+
+Use `golang.org/x/exp/shiny/materialdesign/icons` for standard Material Design icons in Gio. Each icon is a `[]byte` in IconVG format that `widget.NewIcon` decodes.
+
+```go
+import (
+    "gioui.org/widget"
+    "golang.org/x/exp/shiny/materialdesign/icons"
+)
+
+// Load once at construction — never per frame
+refresh, _ := widget.NewIcon(icons.NavigationRefresh)
+stop, _    := widget.NewIcon(icons.AVStop)
+play, _    := widget.NewIcon(icons.AVPlayArrow)
+```
+
+---
+
+## Window Position Persistence (macOS)
+
+Gio has **no public API for window position**. `Config.Size` exists but `Config.Position` does not — a patch was proposed in 2022 and rejected by the maintainer.
+
+**Workaround**: Use `AppKitViewEvent.View` (the native NSView handle) with CGo to call Cocoa APIs directly.
+
+### Getting the native handle
+
+```go
+case app.AppKitViewEvent:
+    if e.Valid() {
+        viewHandle = e.View  // uintptr — CFTypeRef for NSView
+    }
+```
+
+### CGo for position get/set
+
+Use `uintptr_t` in C signatures to avoid `go vet` "misuse of unsafe.Pointer" warnings:
+
+```c
+// #cgo CFLAGS: -x objective-c -fobjc-arc
+// #cgo LDFLAGS: -framework AppKit
+#import <AppKit/AppKit.h>
+#include <stdint.h>
+
+static void getWindowFrame(uintptr_t viewRef, CGFloat *x, CGFloat *y, CGFloat *w, CGFloat *h) {
+    @autoreleasepool {
+        NSView *view = (__bridge NSView *)(void *)viewRef;
+        NSWindow *window = view.window;
+        if (!window) { *x=0; *y=0; *w=0; *h=0; return; }
+        NSRect frame = [window frame];
+        *x = frame.origin.x; *y = frame.origin.y;
+        *w = frame.size.width; *h = frame.size.height;
+    }
+}
+
+static void setWindowFrame(uintptr_t viewRef, CGFloat x, CGFloat y, CGFloat w, CGFloat h) {
+    @autoreleasepool {
+        NSView *view = (__bridge NSView *)(void *)viewRef;
+        NSWindow *window = view.window;
+        if (!window) return;
+        [window setFrame:NSMakeRect(x, y, w, h) display:YES];
+    }
+}
+```
+
+Go side: `C.getWindowFrame(C.uintptr_t(viewHandle), &cx, &cy, &cw, &ch)`
+
+### Key gotchas
+
+- **Coordinate system**: macOS origin is **bottom-left** of screen. `y` is distance from screen bottom to window bottom.
+- **Screen coordinates vs Dp**: NSWindow frame is in screen points (not Gio `unit.Dp`). Save/restore using native frame values — do NOT mix with `app.Size()` which expects Dp.
+- **Multi-monitor**: Validate saved position is still on-screen before restoring (monitors may change). Use `[NSScreen screens]` and `NSPointInRect`.
+- **`AppKitViewEvent` timing**: Arrives after the window is created but before the first `FrameEvent`. Restore position in the `AppKitViewEvent` handler.
+- **`AppKitViewEvent` is darwin-only**: Not visible on pkg.go.dev (docs generated for Linux). Type-assert `app.ViewEvent` to `app.AppKitViewEvent`.
+- **Gio's `app.Size()` forces mode to `Windowed`**: If user was maximized, calling `Size()` un-maximizes.
+- **Persistence**: Save frame to JSON in `os.UserConfigDir()/appname/`. Write atomically (tmp + rename). Debounce saves — don't write every frame.
+- Reference implementation: `~/src/go gui/window-memory/`
+
+Use with `material.IconButton` for buttons:
+```go
+btn := material.IconButton(th, &clickable, icon, "Description")
+btn.Size = unit.Dp(18)
+btn.Inset = layout.UniformInset(unit.Dp(6))
+btn.Background = color.NRGBA{} // transparent — no filled circle
+btn.Color = iconColor
+btn.Layout(gtx)
+```
+
+Common icon paths: `icons.Navigation*`, `icons.AV*`, `icons.Content*`, `icons.Action*`, `icons.Communication*`.
