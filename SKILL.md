@@ -26,7 +26,7 @@ This skill defines the mandatory standards for Go development. These rules are *
 -   **[TEST_RULES.md](skills/TEST_RULES.md)**: Testing philosophy, patterns, and mandatory practices.
 -   **[SETUP.md](skills/SETUP.md)**: Project initialization, configuration, and templates.
 -   **[EXAMPLES.md](skills/EXAMPLES.md)**: Reference guide to the included example files.
--   **[GIO_UI.md](skills/GIO_UI.md)**: Gio GUI framework — library guide, critical gotchas, cross-platform CGO builds.
+-   **[GIO_UI.md](skills/GIO_UI.md)**: Gio GUI framework — core concepts, then sub-files: [GIO_GOTCHAS.md](skills/GIO_GOTCHAS.md), [GIO_PATTERNS.md](skills/GIO_PATTERNS.md), [GIO_PLATFORM.md](skills/GIO_PLATFORM.md).
 
 ## Repository & Project Layout
 
