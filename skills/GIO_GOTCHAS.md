@@ -126,7 +126,17 @@ pointer.InputOp{
 }
 ```
 
-## 7. Keyboard Focus Must Be Explicitly Requested
+## 7. Pointer Event Positions Are in Local Coordinates
+
+`pointer.Event.Position` is relative to the clip/offset context where `event.Op()` was registered — NOT absolute window coordinates. If you register an event handler inside nested `op.Offset()` calls (e.g., inside a list row inside a column), the position is relative to that column's top-left.
+
+**Problem**: Passing `e.Position` from a nested handler to a component that renders at the window level (like a context menu) places it at the wrong location.
+
+**Solution**: Use `daz-golang-gio/menu` which tracks cursor position automatically via a full-window PassOp event area in `Layout()`. Callers never pass coordinates — `Show(items)` uses the tracked position.
+
+If building your own positioning, register the event area at the outermost scope where you need absolute coordinates, or accumulate known offsets manually.
+
+## 9. Keyboard Focus Must Be Explicitly Requested
 
 When switching keyboard input between handlers (e.g. rename input → terminal), explicitly request focus:
 
@@ -138,7 +148,7 @@ Without this, `key.EditEvent` (typed characters) won't be delivered to the new h
 
 **Focus fight**: A widget with `skipKeyboard=true` (parent handles keyboard) must NOT call `gtx.Execute(key.FocusCmd{Tag: w})` on `pointer.Press`. Doing so steals focus from the parent's keyboard handler, breaking clipboard (Cmd+C/V) and all key input.
 
-## 8. Clipboard MIME Type
+## 10. Clipboard MIME Type
 
 Gio uses `"application/text"` — **not** `"text/plain"`. Using the wrong type causes silent failure — `transfer.DataEvent` never arrives.
 
