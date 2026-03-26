@@ -4,10 +4,11 @@
 
 -   **Exported**: `PascalCase` for types, functions, methods, constants, interfaces.
 -   **Unexported**: `camelCase` for fields, local variables, helper functions.
--   **Acronyms**: All caps: `HTTP`, `URL`, `ID`, `JSON`, `SQL` (not `Http`, `Url`, `Id`).
+-   **No abbreviations**: Write full words. `transaction` not `tx`. `context` not `ctx`. `database` not `db`. `definition` not `def`. `instance` not `inst`. `config` not `cfg`. The only exception is `id` which is a word in its own right.
+-   **No consecutive capitals**: Acronyms are capitalized as words, not all-caps. `instanceId` not `instanceID`. `httpClient` not `HTTPClient`. `jsonData` not `JSONData`. `sqlQuery` not `SQLQuery`. This applies everywhere — fields, variables, function names, type names.
 -   **Packages**: Lowercase, single word, no underscores, no plural (`text` not `texts`, `auth` not `authentication`).
 -   **Interfaces**: Single-method interfaces named method + "er" (`Reader`, `Writer`, `Stringer`). Multi-method interfaces use a descriptive noun.
--   **Receivers**: Short, 1-2 letter, consistent across all methods of a type (`s` for `Service`, `c` for `Client`).
+-   **Receivers**: Descriptive, not abbreviated. `store` for `Store`, `engine` for `Engine`, `server` for `Server` (not `s`, `e`, `srv`).
 -   **Test Functions**: `Test[Function][Scenario]` in PascalCase. Example: `TestTruncateShortStringUnchanged`.
 -   **Constructors**: `New[Type]` for constructor functions. Example: `NewService(logger Logger) *Service`.
 
@@ -79,7 +80,7 @@ func AllStatuses() []Status {
 -   **Single responsibility**: Each function does one thing.
 -   **Parameters**: Accept the narrowest interface that works. Return concrete types.
 -   **Named returns**: Only use for very short functions where it aids clarity. Never use naked returns in functions longer than ~5 lines.
--   **Context**: Functions that do I/O or may block should accept `context.Context` as the first parameter.
+-   **Context**: Functions that do I/O or may block should accept `context.Context` as the first parameter. Exception: database operations — see Database Abstraction below.
 -   **Options pattern**: For functions with many optional parameters, use the functional options pattern:
     ```go
     type Option func(*Config)
@@ -99,7 +100,32 @@ func AllStatuses() []Status {
 -   **Channels for communication, mutexes for state**: Use the right tool.
 -   **Context cancellation**: All long-running goroutines must respect `context.Context` cancellation.
 
-## 8. Prohibited Patterns (Zero Tolerance)
+## 8. Database Abstraction
+
+Three concepts, one interface:
+
+-   **Database**: Holds the connection string/pool. Has a `Transaction()` method that returns a Transaction. Implements the same query interface as Transaction.
+-   **Transaction**: Holds an active transaction. Has `Commit()` and `Rollback()`. Defaults to rollback if not committed. Implements the same query interface as Database.
+-   **The shared interface**: Both Database and Transaction implement it. All domain methods (`GetInstance`, `UpsertInstance`, `AddSetMembership`, etc.) live on this interface. Callers never know or care whether they're talking to a raw connection or a transaction.
+
+```go
+// Usage — callers just call methods on whatever they're given:
+instance := transaction.GetInstance(id)
+transaction.UpsertInstance(instance)
+transaction.AddSetMembership(setPath, differentiator, instanceId)
+transaction.Commit()
+
+// Or without a transaction:
+instance := database.GetInstance(id)
+```
+
+**Rules:**
+-   No code outside the database layer knows about connections, transactions, or SQL details.
+-   Domain methods do NOT accept `context.Context` — the database/transaction handles timeouts internally.
+-   Only one or two places in the entire program create transactions. Everything else just receives "the thing that gets us to the database" and calls methods on it.
+-   All operations within a logical unit of work (e.g., "cell resolves + propagate downstream") use the SAME transaction. Either everything commits or everything rolls back.
+
+## 9. Prohibited Patterns (Zero Tolerance)
 
 -   `interface{}` / `any` when a specific type or generic constraint works
 -   `init()` functions (wire dependencies explicitly in `main`)
@@ -107,8 +133,12 @@ func AllStatuses() []Status {
 -   `panic()` for expected error conditions
 -   Naked returns in functions longer than ~5 lines
 -   Discarding errors: `result, _ := something()`
+-   Swallowing errors: `if err != nil { continue }` or `if err != nil { return }` without propagating. Either return the error or the system is lying about its state.
 -   `time.Sleep` in tests for synchronization
 -   Horizontal-layer package names: `utils/`, `helpers/`, `common/`, `models/`, `services/`
 -   `TODO` comments
 -   Mutable exported fields on structs
 -   `log.Fatal` or `os.Exit` outside of `main()`
+-   Abbreviations in identifiers: `tx`, `ctx`, `db`, `def`, `inst`, `cfg`, `stmt`, `buf`, `req`, `resp`, `conn`, `msg`, `val`, `idx`, `cnt`, `tmp`, `fn`, `cb`. Write the full word.
+-   Consecutive capital letters: `ID` → `Id`, `HTTP` → `Http`, `URL` → `Url`, `JSON` → `Json`, `SQL` → `Sql`, `HTML` → `Html`, `API` → `Api`. Exception: `id` standalone (lowercase) is fine since it's a word.
+-   Single-letter receivers: `s`, `e`, `c`, `r`, `w`. Use the full type name in lowercase.
