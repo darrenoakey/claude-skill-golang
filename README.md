@@ -160,3 +160,7 @@ func TestTruncate(t *testing.T) {
 ./run check              # Full quality gate (lint + all tests)
 ./run run                # Build and run the main binary
 ```
+
+## License
+
+This project is licensed under [CC BY-NC 4.0](https://darren-static.waft.dev) - free to use and modify, but no commercial use without permission.
