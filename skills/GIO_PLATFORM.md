@@ -142,7 +142,32 @@ conn.SetDeadline(time.Now().Add(5 * time.Second))
   --transparent
 ```
 
-Embed and set the dock icon on macOS via CGO (`NSApplication setApplicationIconImage:`). See the `icon_darwin.go` pattern with `//go:embed gui/icon.png`. Always provide a `_other.go` stub for non-darwin builds.
+Use `github.com/darrenoakey/daz-golang-gio/macos` to set the dock icon. Do NOT write local `icon_darwin.go`/`icon_other.go` CGo files — the library handles main-thread dispatch and platform stubs.
+
+```go
+import "github.com/darrenoakey/daz-golang-gio/macos"
+
+//go:embed gui/icon.png
+var dockIconBytes []byte
+```
+
+**CRITICAL: Call `SetDockIcon` from the FrameEvent handler, NOT before `app.Main()`.** The Cocoa run loop must be active for `dispatch_async` to the main queue to execute. Calling before `app.Main()` silently does nothing — the icon never appears.
+
+```go
+// CORRECT: inside event loop, after run loop is active
+var iconOnce sync.Once
+for {
+    switch e := w.Event().(type) {
+    case app.FrameEvent:
+        iconOnce.Do(func() { macos.SetDockIcon(dockIconBytes) })
+        // ... layout ...
+    }
+}
+
+// WRONG: before app.Main() — dispatch_async queues to a run loop that isn't running yet
+macos.SetDockIcon(dockIconBytes)  // silently fails
+app.Main()
+```
 
 ---
 
