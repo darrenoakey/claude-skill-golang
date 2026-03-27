@@ -79,3 +79,7 @@
 
 ## Gmail API
 - Query parameters with spaces MUST be URL-encoded with `url.QueryEscape()`. Unencoded spaces cause HTTP 400 `failedPrecondition`.
+
+## JSON / Config
+- Go's `int` zero value is 0, same as JSON `0`. If 0 is a valid API value (e.g., `max_instances: 0` meaning "disabled"), use `*int` so `nil` = "not set" and `0` = explicitly set. Without the pointer, `json.Unmarshal` can't distinguish between "field omitted" and "field set to 0".
+- When a subprocess-spawning Go server uses VRAM bookkeeping (e.g., `usedGB`), every code path that frees resources MUST decrement the counter. If model loads succeed but inference fails and the instance restarts, the VRAM from the failed load may not be released — leading to phantom VRAM usage that accumulates on each crash/recovery cycle. Add safety caps (`if condemned > used { condemned = used }`) as a backstop.
