@@ -13,9 +13,7 @@
 
 ## CGO & Cross-compilation
 - `go:embed` embeds files into the binary at compile time. Changes to embedded files (HTML/CSS/JS in dashboards) require rebuilding the binary and restarting the process to take effect. The embedded files are NOT read from disk at runtime.
-- Platform-specific CGO stubs: if `_darwin.go` defines a function called from non-platform-specific code (e.g. `main.go`), Linux builds fail with `undefined: FuncName`. Fix: add `icon_other.go` with `//go:build !darwin` containing a no-op stub. The `_darwin.go` filename suffix auto-excludes it; the stub covers all other platforms.
-- CGO cross-compilation macOS arm64→amd64: Set `CC: clang -arch x86_64` and `CXX: clang++ -arch x86_64` alongside `GOARCH: amd64` in the CI env. Without explicit arch flags, CGO may pick wrong GL bindings and fail with `undefined: Functions` (Gio v0.7.1 uses Metal on arm64, OpenGL on amd64).
-- Go+Gio GUI apps on Linux CI runners require CGO system headers: `sudo apt-get install -y gcc pkg-config libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev`. macOS runners work out of the box (Xcode CLT handles ObjC CGO).
+- **Platform stubs, cross-compilation, Linux CI headers**: See `GIO_PLATFORM.md` for detailed examples and CI configs.
 
 ## Process Management
 - Process group killing: when processes are started with `setsid()`, killing the parent with `os.Kill` leaves orphaned children. Use `syscall.Kill(-pgid, syscall.SIGTERM)` or `unix.Kill(-pgid, unix.SIGTERM)` to kill the entire process group.
