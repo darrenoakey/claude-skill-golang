@@ -21,11 +21,12 @@ This skill defines the mandatory standards for Go development. These rules are *
 
 ## Documentation & Standards
 
--   **[CODE_RULES.md](skills/CODE_RULES.md)**: Coding standards, naming, style, and prohibited patterns.
+-   **[CODE_RULES.md](skills/CODE_RULES.md)**: Coding standards, naming, style, error handling, and prohibited patterns.
 -   **[ARCH_RULES.md](skills/ARCH_RULES.md)**: Project structure, file organization, and package layout.
 -   **[TEST_RULES.md](skills/TEST_RULES.md)**: Testing philosophy, patterns, and mandatory practices.
--   **[SETUP.md](skills/SETUP.md)**: Project initialization, configuration, and templates.
+-   **[SETUP.md](skills/SETUP.md)**: Project initialization, `run` script template, and configuration.
 -   **[EXAMPLES.md](skills/EXAMPLES.md)**: Reference guide to the included example files.
+-   **[AI_PROVIDERS.md](skills/AI_PROVIDERS.md)**: Native Go SDKs for Claude, OpenAI, Gemini, Ollama.
 -   **[GIO_UI.md](skills/GIO_UI.md)**: Gio GUI framework — core concepts, then sub-files: [GIO_GOTCHAS.md](skills/GIO_GOTCHAS.md), [GIO_PATTERNS.md](skills/GIO_PATTERNS.md), [GIO_PLATFORM.md](skills/GIO_PLATFORM.md).
 -   **[GOTCHAS.md](skills/GOTCHAS.md)**: Runtime pitfalls, library quirks, and hard-won lessons (Gio, chromedp, SQL, CGO, etc.).
 
@@ -89,96 +90,6 @@ This means:
 
 ---
 
-## Coding Standards (Summary)
-
-**Naming policy**
-- Exported: `PascalCase` for types, functions, methods, constants
-- Unexported: `camelCase` for fields, local variables, helper functions
-- Acronyms: all caps (`HTTP`, `URL`, `ID`, not `Http`, `Url`, `Id`)
-- Packages: lowercase, single word, no underscores, no plural (`text` not `texts`)
-- Interfaces: single-method interfaces named method + "er" (`Reader`, `Writer`, `Stringer`)
-
-**Documentation policy**
-- Go doc comments on ALL exported symbols
-- Start with the name being documented: `// Truncate shortens a string to maxLen.`
-- Package comments in a `doc.go` file when a package needs overview explanation
-- Explain **WHY**, not WHAT
-
-**See [CODE_RULES.md](skills/CODE_RULES.md) for complete standards.**
-
----
-
-## Error Handling
-
-Go uses error values, not exceptions. The rules:
-
-- **Return errors explicitly.** Every function that can fail returns `error` as the last return value.
-- **Check errors immediately.** Never discard an error with `_`.
-- **Wrap with context.** Use `fmt.Errorf("operation context: %w", err)` to add meaning.
-- **No panic** except truly unrecoverable situations (corrupted internal state).
-- **Sentinel errors** for specific cases: `var ErrNotFound = errors.New("not found")`.
-- **Error types** when callers need to inspect details: implement the `error` interface.
-
-**Entry-point exception policy**
-```go
-func main() {
-    if err := run(); err != nil {
-        fmt.Fprintf(os.Stderr, "error: %v\n", err)
-        os.Exit(1)
-    }
-}
-```
-
-**Processing-loop pattern**
-```go
-// processBatch ensures one bad item does not abort a long batch
-// while logging context for triage.
-func processBatch(items []string) error {
-    var errs []error
-    for _, item := range items {
-        if err := processOne(item); err != nil {
-            log.Printf("processOne failed item=%q err=%v", item, err)
-            errs = append(errs, fmt.Errorf("item %q: %w", item, err))
-            continue
-        }
-    }
-    return errors.Join(errs...)
-}
-```
-
-**Context enrichment**
-```go
-result, err := db.Query(ctx, query)
-if err != nil {
-    return fmt.Errorf("fetching user %s: %w", userID, err)
-}
-```
-
----
-
-## AI Provider SDKs (Native Go)
-
-All major AI providers now have official Go SDKs. Use these for any Go app that needs AI — never shell out to CLI tools.
-
-| Provider | Package | Structured Output | Streaming |
-|----------|---------|-------------------|-----------|
-| **Claude** | `github.com/anthropics/anthropic-sdk-go` | `JSONOutputFormatParam` with JSON schema | `client.Messages.NewStreaming()` |
-| **OpenAI** | `github.com/openai/openai-go` | `ResponseFormatJSONSchemaParam` with `Strict: true` | `client.Chat.Completions.NewStreaming()` |
-| **Gemini** | `google.golang.org/genai` | `ResponseJsonSchema` + `ResponseMIMEType: "application/json"` | `GenerateContentStream()` returns `iter.Seq2` |
-| **Ollama** | Raw HTTP to `localhost:11434` | `"format": <json_schema>` in chat request | Line-delimited JSON chunks |
-
-**Key patterns:**
-- All use native structured output (JSON schema enforcement) — never use prompt injection for structured output
-- Anthropic/OpenAI streaming use `ssestream.Stream` with `Next()`/`Current()`/`Err()` pattern
-- Gemini streaming uses Go 1.22+ range-over-func (`iter.Seq2`)
-- Ollama raw HTTP is preferred over `github.com/ollama/ollama/api` which drags in the entire Ollama binary dependency tree
-- Auth: SDKs auto-read `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`
-- System messages: Anthropic uses separate `System` param (not in messages array); Gemini uses `SystemInstruction`; OpenAI/Ollama include in messages array
-- OpenAI SDK `apierror.Error.Error()` panics when `.Request`/`.Response` are nil — use `errors.As` before calling `.Error()` in error classification
-- Reference implementation: `daz-agent-sdk/go/provider/` has working providers for all four
-
----
-
 ## Secrets & Configuration
 
 **Secrets**
@@ -193,105 +104,20 @@ All major AI providers now have official Go SDKs. Use these for any Go app that 
 
 ---
 
-## Testing Policy (Real, Integration-First, Per-File)
-
-- Each `x.go` has `x_test.go` beside it. Same package (white-box testing).
-- Use the **standard `testing` package**. No third-party test frameworks.
-- All tests are real end-to-end or integration tests. No smoke checks.
-- **Run only the specific tests for the file you are working on.**
-  - Do **not** run the full suite during development. `./run check` runs everything at the end.
-  - Example: `go test ./pkg/text/ -run TestTruncate -count=1`
-- Write all test logs and artifacts to `output/testing/`.
-- Table-driven tests are the default pattern for multiple cases.
-- Use `t.Helper()` in test helpers so failures report the caller's line.
-- Use `t.Cleanup()` for teardown, not `defer` in tests.
-- Use subtests (`t.Run`) for table-driven tests and logical grouping.
-
-**See [TEST_RULES.md](skills/TEST_RULES.md) for complete testing standards.**
-
----
-
-## Linting, Warnings, and Quality Gates
-
-- Treat all warnings as errors.
-- `gofmt` must produce no changes (formatting is canonical).
-- `go vet ./...` must be clean.
-- `golangci-lint run` must be clean.
-- `go test ./...` must pass with zero failures.
-- Run linter after each file, then run only the tests for that file.
-- At the end of the task, run `./run check` which runs the full quality gate suite.
-- **No commits** without full `./run check` pass.
-
----
-
-## Prohibited Patterns (Zero-Tolerance)
-
-**Forbidden words in code/tests/comments:**
-`simulate`, `mock`, `fake`, `pretend`, `placeholder`, `stub`, `dummy`, `sleep` (in tests), `todo`
-
-**Forbidden patterns:**
-- `interface{}` or `any` when a specific type works
-- `init()` functions (surprising side effects; wire dependencies explicitly)
-- Global mutable state (package-level `var` that gets mutated)
-- `panic()` for expected error conditions
-- Naked returns in functions longer than a few lines
-- Underscore discarding errors: `result, _ := something()`
-- `time.Sleep` in tests for synchronization
-
-**Consequences:**
-- Any appearance of the above indicates failure of the task.
-
-**What to do instead:**
-- If a dependency is missing or a system is unavailable, stop and report a blocker with exact requirements to proceed.
-
----
-
-## Architecture Heuristics
-
-**Separation of concerns**
-- Business rules are thin adapters over generic utilities in `pkg/`.
-- Cluster by domain (`pkg/text/`, `pkg/net/`, `pkg/io/`, `pkg/llm/`).
-
-**Stateless first**
-- Prefer pure functions that take parameters and return values.
-- When state is needed, use structs with unexported fields and constructor functions.
-
-**File and function size signals**
-- If a file exceeds ~200-300 lines or a function exceeds ~25 lines, refactor.
-- A function with a loop should primarily loop and call a named helper.
-- A multi-step function should delegate each step to named helpers.
-
-**Interfaces at the consumer**
-- Define interfaces where they are used, not where they are implemented.
-- Keep interfaces small: 1-2 methods. Go interfaces are satisfied implicitly.
-- Accept interfaces, return concrete types.
-
-**See [ARCH_RULES.md](skills/ARCH_RULES.md) for complete architecture standards.**
-
----
-
 ## Development Workflow
 
 **For each file change:**
-1. Write or modify code following the standards above
+1. Write or modify code following the standards in [CODE_RULES.md](skills/CODE_RULES.md)
 2. Run formatter: `gofmt -w .` (from `src/`)
 3. Run vet: `go vet ./pkg/text/`
 4. Run tests for that specific package: `go test ./pkg/text/ -run TestTruncate -count=1 -v`
 5. Fix any issues and repeat steps 2-4
 
 **At task completion:**
-1. Run `./run check` (full quality gate suite)
-2. Ensure all tests pass
-3. Ensure no warnings, vet issues, or lint errors
-4. Ensure `gofmt` produces no changes
-5. Only then commit
+1. Run `./run check` (full quality gate suite: lint + all tests)
+2. All tests, vet, lint, and `gofmt` must be clean
+3. **No commits** without full `./run check` pass
 
-**Key Principles:**
-- Verify success through **real, individual tests** for the package being worked on
-- Write test output to `output/testing/`
-- Clean the repository and re-run checks until zero errors
-- `./run check` must be green before any commit
-
-**If debugging a runtime issue or library quirk**, read [GOTCHAS.md](skills/GOTCHAS.md) — covers Gio, chromedp, SQL, CGO, testing, and more.
+**If debugging a runtime issue or library quirk**, read [GOTCHAS.md](skills/GOTCHAS.md).
 
 **IF YOU VIOLATE THESE RULES, YOU WILL FAIL.**
