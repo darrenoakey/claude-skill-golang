@@ -164,6 +164,20 @@ clipboard.WriteCmd{
 out, err := exec.Command("pbpaste").Output()  // macOS: run in goroutine
 ```
 
+## 11. Multi-Window Event Debugging
+
+When debugging events not firing in a Gio app with multiple window types (ControlWindow + standalone TerminalWidget), instrument ALL window types — a missing log might mean the event goes to the OTHER window, not that it's missing entirely.
+
+## 12. CVDisplayLink / Animation Fallback
+
+`SetAnimating()` + nil/broken CVDisplayLink: launch a 60Hz `time.Ticker` fallback goroutine. Do NOT add `setNeedsDisplay` inside `SetAnimating` — creates a busy-loop. Hardware sync handles can be created (non-nil) but fail to deliver callbacks. Pair hardware sync with a software fallback — NOT by adding side-effects to hot-path methods.
+
+## 13. Clipboard WriteCmd Timing
+
+`clipboard.WriteCmd` is deferred to the next frame. On macOS with broken display link, use `exec.Command("pbcopy")`/`exec.Command("pbpaste")` instead (run in goroutine — see #3).
+
+Mouse selection auto-copy: only call pbcopy on `pointer.Release` when selection has real extent (start ≠ end). A single click overwrites the clipboard.
+
 ---
 
 ## Keyboard Input

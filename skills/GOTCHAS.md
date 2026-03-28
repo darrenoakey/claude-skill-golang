@@ -1,15 +1,7 @@
 # Go Gotchas & Known Pitfalls
 
 ## Gio GUI Framework
-- `material.NewTheme()` is expensive — allocates a shaper and font cache. In frame-loop code, create once at construction and store as a persistent field, never call per-frame.
-- macOS frame handlers: NEVER call blocking operations (subprocess, cross-window `window.Option()`) from within a frame handler. The Cocoa main thread blocks waiting for the frame to complete → deadlock. Run all external/cross-window calls in goroutines.
-- `key.Filter` with empty `Name` skips "SystemEvents" (Tab, Shift+Tab). To receive Tab in a widget, add explicit `key.Filter{Name: key.NameTab}` alongside the catch-all filter. Without it, Gio consumes Tab for focus navigation.
-- `pointer.Filter` requires `ScrollY`/`ScrollX` bounds for scroll events. Default `{Min:0, Max:0}` silently rejects ALL scroll events. Always set bounds matching your scrollable content range.
-- When debugging events not firing in a Gio app with multiple window types (ControlWindow + standalone TerminalWidget), instrument ALL window types — a missing log might mean the event goes to the OTHER window, not that it's missing entirely.
-- `SetAnimating()` + nil/broken CVDisplayLink: launch a 60Hz `time.Ticker` fallback goroutine. Do NOT add `setNeedsDisplay` inside `SetAnimating` — creates a busy-loop.
-- Hardware sync handles can be created (non-nil) but fail to deliver callbacks. Pair hardware sync with a software fallback — NOT by adding side-effects to hot-path methods.
-- `clipboard.WriteCmd` is deferred to the next frame. On macOS with broken display link, use `exec.Command("pbcopy")`/`exec.Command("pbpaste")` instead.
-- Mouse selection auto-copy: only call pbcopy on `pointer.Release` when selection has real extent (start ≠ end). A single click overwrites the clipboard.
+See `GIO_GOTCHAS.md` for all Gio-specific pitfalls (theme allocation, frame handler deadlocks, key/pointer filters, clipboard, display link, etc.).
 
 ## CGO & Cross-compilation
 - `go:embed` embeds files into the binary at compile time. Changes to embedded files (HTML/CSS/JS in dashboards) require rebuilding the binary and restarting the process to take effect. The embedded files are NOT read from disk at runtime.
@@ -28,6 +20,8 @@
 - Use `t.Cleanup(func() { /* teardown */ })` not deferred-after-Fatal for tmux/subprocess cleanup. `t.Fatalf` calls `runtime.Goexit()` skipping deferred code — `t.Cleanup` runs regardless.
 - Test servers with hardcoded ports fail when multiple test runs execute concurrently. Always use `net.Listen("tcp", "127.0.0.1:0")` to get an OS-assigned free port.
 - **Goroutine timer test poisoning**: `time.AfterFunc`/goroutines spawned during a test that reference shared state (mutexes, App pointers, session objects) can fire AFTER the test completes and poison subsequent `-count=N` runs. Orphan goroutines hold references to defunct state and contend on locks. Prefer coalescing logic in the render/poll path over background timer goroutines that outlive the test scope.
+- `os.Setenv`/`os.Unsetenv` in tests: defer cleanup must ALWAYS unset when the original was empty, not just skip the restore. Pattern: `if orig != "" { os.Setenv(key, orig) } else { os.Unsetenv(key) }`. Skipping the `else` branch leaks test values into subsequent tests in the same package (Go runs tests sequentially within a package).
+- OpenAI SDK `apierror.Error.Error()` panics when `.Request`/`.Response` are nil (e.g., in unit tests constructing typed errors). Check with `errors.As` before calling `.Error()` in error classification code.
 
 ## Lambda / Deployment
 - Compile with `-ldflags="-s -w"` to strip debug symbols. Lambda's 6MB limit applies to the **compressed** zip, not raw binary.
@@ -77,10 +71,6 @@
 
 ## Gmail API
 - Query parameters with spaces MUST be URL-encoded with `url.QueryEscape()`. Unencoded spaces cause HTTP 400 `failedPrecondition`.
-
-## Testing
-- `os.Setenv`/`os.Unsetenv` in tests: defer cleanup must ALWAYS unset when the original was empty, not just skip the restore. Pattern: `if orig != "" { os.Setenv(key, orig) } else { os.Unsetenv(key) }`. Skipping the `else` branch leaks test values into subsequent tests in the same package (Go runs tests sequentially within a package).
-- OpenAI SDK `apierror.Error.Error()` panics when `.Request`/`.Response` are nil (e.g., in unit tests constructing typed errors). Check with `errors.As` before calling `.Error()` in error classification code.
 
 ## JSON / Config
 - Go's `int` zero value is 0, same as JSON `0`. If 0 is a valid API value (e.g., `max_instances: 0` meaning "disabled"), use `*int` so `nil` = "not set" and `0` = explicitly set. Without the pointer, `json.Unmarshal` can't distinguish between "field omitted" and "field set to 0".
