@@ -70,7 +70,14 @@ See `GIO_GOTCHAS.md` for all Gio-specific pitfalls (theme allocation, frame hand
 - `os.MkdirAll` fails on paths with symlink components (e.g. `~/big2` → `/Volumes/big2`). Use `filepath.EvalSymlinks` on the parent dir first.
 
 ## Gmail API
+- `list-messages` with `labelIds=INBOX` + `q=after:TIMESTAMP` triggers `failedPrecondition`. Use `search` with query `"in:inbox after:N"`.
 - Query parameters with spaces MUST be URL-encoded with `url.QueryEscape()`. Unencoded spaces cause HTTP 400 `failedPrecondition`.
+
+## PostgreSQL JSONB ↔ Go Hash Matching
+- PostgreSQL `jsonb::text` and Go `json.Marshal(map[string]interface{})` both produce compact JSON with space after colon (e.g., `{"a": "b"}`).
+- Go-compatible SHA-256 in PostgreSQL: `left(encode(digest(convert_to(data::text, 'UTF8'), 'sha256'), 'hex'), 16)` matches `fmt.Sprintf("%x", sha256.Sum256(jsonBytes)[:8])`.
+- Requires pgcrypto extension (`digest` function).
+- Useful for bulk migrations where value_versions hashes need recomputing without Go.
 
 ## JSON / Config
 - Go's `int` zero value is 0, same as JSON `0`. If 0 is a valid API value (e.g., `max_instances: 0` meaning "disabled"), use `*int` so `nil` = "not set" and `0` = explicitly set. Without the pointer, `json.Unmarshal` can't distinguish between "field omitted" and "field set to 0".
