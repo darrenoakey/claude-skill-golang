@@ -35,7 +35,18 @@ See `GIO_GOTCHAS.md` for all Gio-specific pitfalls (theme allocation, frame hand
 
 ## Templates / Web
 - `html/template` with `embed.FS`: use `fs.Sub(staticFSRaw, "static")` before `http.FileServer`. Multiple template files defining `{{define "content"}}` conflict — parse layout once, then `Clone()` per page.
+- **Per-request template building** (more robust than `Clone()`): when multiple page templates all define `{{define "content"}}`, the last one parsed wins globally. The fix is `buildTemplate(pagePath)` which creates a fresh `template.Template` per render: parse base.html + partials + target page template into a new set each time. Pre-read all template text at init; per-render cost is in-memory string parsing only (microseconds). `Clone()` fails for the same reason — the cloned set still has all page defines registered.
 - SSE endpoints (`text/event-stream`) never close — Playwright's `networkidle` hangs forever. Delay `new EventSource()` in JS so the page's `load` event fires first.
+- **`go:embed` path restriction**: `//go:embed` cannot traverse `..` — all embedded files must be in a subtree under the package containing the directive. Move templates and static assets into a dedicated `internal/assets/` package with its own `assets.go` containing `//go:embed templates static`.
+
+## Playwright-Go (playwright-community/playwright-go)
+- **`HasText` field type**: `LocatorFilterOptions.HasText` is `any` — it type-asserts to `string` internally. Pass a bare `string` value, NOT `playwright.String(text)` which returns `*string` and causes `interface{} is *string, not string` panic.
+- **`SelectOption` returns `([]string, error)`**: not just `error`. Always capture with `_, err := locator.SelectOption(...)`.
+- **`WaitForNavigation` does not exist** in v0.5700.1: use `page.WaitForLoadState()` instead.
+- **`BrowserNewContextOptions.ViewportSize`** does not exist: use `Viewport *playwright.Size` field. `playwright.SetViewportSize` also does not exist — construct `playwright.Size{Width: W, Height: H}` directly.
+- **Filter select + JS `form.submit()` race**: selecting a filter value via `SelectOption`, then submitting via `page.Evaluate("form.submit()")` triggers navigation. If you then select another filter on the resulting page, you get "Execution context was destroyed". Fix: read current filter values from the DOM, build the URL with all params, and call `page.Goto(url)` directly instead of submitting a form.
+- **Comment POST redirect + immediate assertion**: after `locator.Click()` on a submit button that triggers a POST+redirect, `WaitForLoadState()` is not sufficient to guarantee the new comment appears. After the redirect completes, also wait for the new comment element: `commentLocator.WaitFor(LocatorWaitForOptions{State: Visible})`.
+- **Strict mode violation with shared `data-test` selectors**: if both list panel and detail panel have `[data-test="empty-state"]`, Playwright strict mode fails with "2 elements matched". Scope the selector: `.issue-list-scroll [data-test="empty-state"]`.
 
 ## SQL / database/sql
 - **An index cannot make an unfiltered full-table `JOIN ... GROUP BY` low-order.** For exact hot-path counts, maintain a compact aggregate ledger transactionally as base rows change (database triggers are appropriate when many write paths exist), then query only the ledger. Preserve every filter semantic as an explicit ledger dimension (for example, cell tombstone versus membership tombstone), use a durable version marker so the base-table backfill runs exactly once rather than at every startup, and regression-test both ledger/base equality and `EXPLAIN` plans that do not reference the large base tables.
@@ -46,6 +57,9 @@ See `GIO_GOTCHAS.md` for all Gio-specific pitfalls (theme allocation, frame hand
 - **Prepared statements for remote PostgreSQL**: Query planning adds ~25-30ms overhead per call. For hot-path queries called 1000+ times, use `db.Prepare()` at init and cache the `*sql.Stmt` on the Store struct. Cuts per-call latency in half for remote databases.
 - **Batch DB writes into transactions**: 100 operations in one `BeginTx/Commit` is ~100x faster than 100 auto-commit calls (1 network round-trip + 1 fsync vs 100 of each). Use `WriteItemResult`-style methods that bundle value insert + state update + execution record + event in a single tx.
 - **CTE planning overhead**: Complex CTEs with UPDATE...RETURNING pay ~30ms PostgreSQL planning time per call. Prefer simple UPDATE...FROM + separate INSERT over a CTE when called in tight loops.
+- **sqlite-vec distance metric is L2, not cosine**: A `vec0` virtual table created with bare `embedding float[N]` (no column-level `distance_metric=`) reports squared L2 distance from `WHERE embedding MATCH ?` queries. For L2-normalized embeddings (ArcFace/CLIP/etc.), convert back to cosine with `cos = 1 - d²/2`. Silently using `distance` as if it were cosine will mis-rank clusters and break similarity thresholds.
+- **sqlite-vec + mattn/go-sqlite3 on macOS**: `sqlite_vec.Auto()` compiles fine but emits `sqlite3_auto_extension is deprecated` warnings from Apple's SDK headers. They're non-fatal — the extension loads correctly and `vec_faces` tables work. Don't chase the warning.
+- **sqlite-vec Go binding choice**: Use `github.com/asg017/sqlite-vec-go-bindings/cgo` paired with `github.com/mattn/go-sqlite3` (CGO). The pure-Go `modernc.org/sqlite` driver can't load arbitrary C extensions, so sqlite-vec is not compatible with it.
 
 ## chromedp
 - Chrome reattach: read `DevToolsActivePort` from user data dir, verify via `/json/version`, connect with `chromedp.NewRemoteAllocator`. Falls back to launching fresh.

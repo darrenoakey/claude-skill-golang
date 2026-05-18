@@ -18,6 +18,7 @@ This skill defines the mandatory standards for Go development. These rules are *
 5.  **Zero Warnings**: `go vet`, `golangci-lint`, and `gofmt` must be clean. No exceptions.
 6.  **"HOW" vs "WHAT"**: 95% of code in `pkg/` (reusable utilities), 5% in `cmd/` (entry points).
 7.  **Document Everything**: Go doc comments on ALL exported types, functions, methods, and constants.
+8.  **25-Line Function Limit**: No function body may exceed 25 lines. If it does, factor it into smaller functions with meaningful names. No exceptions.
 
 ## Documentation & Standards
 
