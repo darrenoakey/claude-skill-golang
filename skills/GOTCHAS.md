@@ -36,6 +36,7 @@
 
 ## Runtime
 - Long-running daemons: set `debug.SetMemoryLimit(N)` at startup. Without it, Go GC only triggers when heap doubles — transient bursts can balloon to OOM. Set to ~2.5x expected steady-state RSS.
+- **Adaptive schedulers must distinguish inspected work from actual progress.** A dependency-blocked item that returns `true`/"worked" after deciding to skip pins the scheduler at its minimum delay forever: the same blocked rows are reopened, reclassified, and committed in a hot loop even though no result changes. Return no-progress for unmet dependencies/passive skips, let the idle backoff grow, enumerate only state/time-eligible levels instead of `0..maxHistoricalLevel`, and regression-test a permanently blocked item plus the scheduler's work result.
 - `macOS filepath.EvalSymlinks` on non-existent paths: `/var/folders` is a symlink to `/private/var/folders`. Walk the ancestor chain to find the first existing directory, resolve it, then reattach remaining components.
 - gopsutil on macOS: `p.Name()` returns "Python" (capital P). Use `strings.ToLower` for interpreter matching. Use `p.Cwd()` for meaningful process identification.
 - Unrecovered panic in ANY goroutine kills the entire process. Always add `defer func() { if r := recover(); r != nil { log(r) } }()` in fire-and-forget goroutines.
