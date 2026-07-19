@@ -79,8 +79,8 @@ See `GIO_GOTCHAS.md` for all Gio-specific pitfalls (theme allocation, frame hand
 ## Circular Import Resolution
 - When a `capability` subpackage imports the root package for types, the root package cannot import `capability` back. Solve with injectable function fields on structs (e.g., `Agent.ImageFn func(...)`) — the CLI or main wires up both packages. Cleaner than interfaces for a small number of capabilities.
 
-## Ollama Image Generation
-- Ollama supports image gen models (z-image-turbo, flux2-klein) via standard `/api/generate` endpoint. Response has `image` field with base64 PNG data (not in `response` field). Model names are prefixed with `x/` (e.g., `x/z-image-turbo`). macOS only as of early 2026.
+## Still-Image Generation
+- Go programs must submit still-image work only through the Mac mini durable Codex image-generation service, normally via `~/bin/generate_image` or the canonical durable IGS client contract. Ollama, Z-Image, Flux, Arbiter, direct OpenAI image APIs, and built-in image tools are not fallback routes. Persist every returned job ID and resume/poll/download non-ready jobs instead of resubmitting; fail closed when the canonical service is unavailable. This does not affect LTX2 video, BiRefNet background removal, vision, or audio jobs.
 
 ## Filesystem
 - `os.MkdirAll` fails on paths with symlink components (e.g. `~/big2` → `/Volumes/big2`). Use `filepath.EvalSymlinks` on the parent dir first.
@@ -123,6 +123,10 @@ See `GIO_GOTCHAS.md` for all Gio-specific pitfalls (theme allocation, frame hand
 ## pgx/v5 pool + Postgres advisory locks
 - Postgres advisory locks are SESSION-scoped: when a `pgxpool` connection goes back to the pool after `pg_try_advisory_lock`, the lock is orphaned on that backend and released whenever the pool closes that connection. For any lock that must last the process lifetime (singleton lock, long-lived serialization), use a dedicated `pgx.Connect()` connection — NOT the pool — and hold it until process exit. `pgxpool.Exec(ctx, "SELECT pg_try_advisory_lock($1)")` appears to work but silently releases on the next pool recycle.
 - `go get github.com/jackc/pgx/v5` does NOT pull in `pgxpool`: `go get github.com/jackc/pgx/v5/pgxpool` is a separate command (adds `github.com/jackc/puddle/v2` to go.sum).
+
+## golangci-lint v2 config schema
+- `golangci-lint` v2 (installed via `brew`/`go install .../cmd/golangci-lint@latest` as of mid-2026) REJECTS the v1-style `.golangci.yml` from this skill's SETUP.md with `can't load config: unsupported version of the configuration: ""`. Fix: add `version: "2"` as the top-level key. Also `gosimple` was merged into `staticcheck` in v2 — listing it under `linters.enable` fails with `unknown linters: 'gosimple'`; just enable `staticcheck` (it covers both rule sets now). Check `golangci-lint --version` before assuming the SETUP.md template works verbatim.
+- `errcheck` (enabled by the v2 default linter set) flags EVERY unchecked `fmt.Fprintf`/`fmt.Fprintln`/`fmt.Fprint` call, even when writing to a `*strings.Builder` (whose `Write`/`WriteString` never actually errors) — assigning the result to `_, _ = ...` still counts as "discarding an error" under this repo's zero-tolerance rule, so that's not a valid fix either. Cleanest pattern for a CLI that formats then writes a multi-line report: build the whole string with `fmt.Sprintf` (single-return, no error) concatenated via `+=`, then do ONE `io.WriteString(writer, report)` / `fmt.Fprint` call whose error you actually check and propagate. This also makes the formatting function pure and trivially testable (assert on the returned string) instead of needing a `bytes.Buffer` + writer plumbing in every test.
 
 ## Cross-compilation for mac mini (amd64)
 - The mac mini in Darren's fleet (10.0.0.46) is Intel x86_64 (darwin/amd64) even though it's macOS. The laptop is arm64. Cross-compile: `GOOS=darwin GOARCH=amd64 go build ...`. The mac mini's Postgres only binds via TCP (no Unix socket at the default path); connect with `host=localhost port=5432` not the default socket.
